@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mirastacklabs-ai/mirastack-sdk-go"
+	"github.com/mirastacklabs-ai/mirastack-agents-sdk-go"
 	"go.uber.org/zap"
 )
 
@@ -30,6 +30,67 @@ func (p *QueryVTracesPlugin) Info() *mirastack.PluginInfo {
 		Description:  "Search and retrieve distributed traces from VictoriaTraces. Supports trace search by service/operation/tags, trace retrieval by ID, service listing, operation listing, and service dependency analysis via the Jaeger-compatible API.",
 		Permissions:  []mirastack.Permission{mirastack.PermissionRead},
 		DevOpsStages: []mirastack.DevOpsStage{mirastack.StageObserve},
+		Actions: []mirastack.Action{
+			{
+				ID:          "search",
+				Description: "Search distributed traces by service, operation, tags, and duration",
+				Permission:  mirastack.PermissionRead,
+				Stages:      []mirastack.DevOpsStage{mirastack.StageObserve},
+				InputParams: []mirastack.ParamSchema{
+					{Name: "service", Type: "string", Required: false, Description: "Service name to filter traces by"},
+					{Name: "operation", Type: "string", Required: false, Description: "Operation/endpoint name to filter"},
+					{Name: "tags", Type: "string", Required: false, Description: "Key-value tags as 'k1=v1,k2=v2' to filter traces"},
+					{Name: "min_duration", Type: "string", Required: false, Description: "Minimum trace duration (e.g., 100ms, 1s)"},
+					{Name: "max_duration", Type: "string", Required: false, Description: "Maximum trace duration (e.g., 5s, 10s)"},
+					{Name: "limit", Type: "string", Required: false, Description: "Maximum number of traces to return (default: 50)"},
+				},
+				OutputParams: []mirastack.ParamSchema{
+					{Name: "result", Type: "json", Required: true, Description: "Traces in Jaeger API response format"},
+				},
+			},
+			{
+				ID:          "trace_by_id",
+				Description: "Retrieve a specific trace by its trace ID",
+				Permission:  mirastack.PermissionRead,
+				Stages:      []mirastack.DevOpsStage{mirastack.StageObserve},
+				InputParams: []mirastack.ParamSchema{
+					{Name: "trace_id", Type: "string", Required: true, Description: "Specific trace ID to retrieve"},
+				},
+				OutputParams: []mirastack.ParamSchema{
+					{Name: "result", Type: "json", Required: true, Description: "Full trace data with all spans"},
+				},
+			},
+			{
+				ID:          "services",
+				Description: "List all services reporting traces",
+				Permission:  mirastack.PermissionRead,
+				Stages:      []mirastack.DevOpsStage{mirastack.StageObserve},
+				OutputParams: []mirastack.ParamSchema{
+					{Name: "result", Type: "json", Required: true, Description: "Array of service names"},
+				},
+			},
+			{
+				ID:          "operations",
+				Description: "List operations for a service",
+				Permission:  mirastack.PermissionRead,
+				Stages:      []mirastack.DevOpsStage{mirastack.StageObserve},
+				InputParams: []mirastack.ParamSchema{
+					{Name: "service", Type: "string", Required: true, Description: "Service name to list operations for"},
+				},
+				OutputParams: []mirastack.ParamSchema{
+					{Name: "result", Type: "json", Required: true, Description: "Array of operation names"},
+				},
+			},
+			{
+				ID:          "dependencies",
+				Description: "Analyze service dependencies from trace data",
+				Permission:  mirastack.PermissionRead,
+				Stages:      []mirastack.DevOpsStage{mirastack.StageObserve},
+				OutputParams: []mirastack.ParamSchema{
+					{Name: "result", Type: "json", Required: true, Description: "Service dependency graph"},
+				},
+			},
+		},
 		Intents: []mirastack.IntentPattern{
 			{Pattern: "search traces", Description: "Search distributed traces", Priority: 10},
 			{Pattern: "get trace", Description: "Retrieve trace by ID", Priority: 9},
@@ -43,22 +104,9 @@ func (p *QueryVTracesPlugin) Info() *mirastack.PluginInfo {
 }
 
 func (p *QueryVTracesPlugin) Schema() *mirastack.PluginSchema {
+	info := p.Info()
 	return &mirastack.PluginSchema{
-		InputParams: []mirastack.ParamSchema{
-			{Name: "action", Type: "string", Required: true, Description: "One of: search, trace_by_id, services, operations, dependencies"},
-			{Name: "service", Type: "string", Required: false, Description: "Service name to filter traces by"},
-			{Name: "operation", Type: "string", Required: false, Description: "Operation/endpoint name to filter"},
-			{Name: "trace_id", Type: "string", Required: false, Description: "Specific trace ID to retrieve (required for trace_by_id)"},
-			{Name: "tags", Type: "string", Required: false, Description: "Key-value tags as 'k1=v1,k2=v2' to filter traces"},
-			{Name: "min_duration", Type: "string", Required: false, Description: "Minimum trace duration (e.g., 100ms, 1s)"},
-			{Name: "max_duration", Type: "string", Required: false, Description: "Maximum trace duration (e.g., 5s, 10s)"},
-			{Name: "start", Type: "string", Required: false, Description: "Start time (RFC3339 or relative like -1h)"},
-			{Name: "end", Type: "string", Required: false, Description: "End time (RFC3339 or 'now')"},
-			{Name: "limit", Type: "string", Required: false, Description: "Maximum number of traces to return (default: 50)"},
-		},
-		OutputParams: []mirastack.ParamSchema{
-			{Name: "result", Type: "json", Required: true, Description: "Query result in Jaeger API response format"},
-		},
+		Actions: info.Actions,
 	}
 }
 
@@ -67,26 +115,26 @@ func (p *QueryVTracesPlugin) Execute(ctx context.Context, req *mirastack.Execute
 		p.logger, _ = zap.NewProduction()
 	}
 
-	action := req.Params["action"]
+	action := req.ActionID
 	if action == "" {
-		return &mirastack.ExecuteResponse{
-			Output: map[string]string{"error": "action parameter is required"},
-			Logs:   []string{"missing required parameter: action"},
-		}, nil
+		action = req.Params["action"]
+	}
+	if action == "" {
+		resp, _ := mirastack.RespondError("action parameter is required")
+		resp.Logs = []string{"missing required parameter: action"}
+		return resp, nil
 	}
 
 	result, err := p.dispatch(ctx, action, req.Params, req.TimeRange)
 	if err != nil {
-		return &mirastack.ExecuteResponse{
-			Output: map[string]string{"error": err.Error()},
-			Logs:   []string{fmt.Sprintf("action %s failed: %v", action, err)},
-		}, nil
+		resp, _ := mirastack.RespondError(err.Error())
+		resp.Logs = []string{fmt.Sprintf("action %s failed: %v", action, err)}
+		return resp, nil
 	}
 
-	return &mirastack.ExecuteResponse{
-		Output: map[string]string{"result": result},
-		Logs:   []string{fmt.Sprintf("action %s completed", action)},
-	}, nil
+	resp, _ := mirastack.RespondMap(map[string]any{"result": result})
+	resp.Logs = []string{fmt.Sprintf("action %s completed", action)}
+	return resp, nil
 }
 
 func (p *QueryVTracesPlugin) dispatch(ctx context.Context, action string, params map[string]string, tr *mirastack.TimeRange) (string, error) {

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	mirastack "github.com/mirastacklabs-ai/mirastack-sdk-go"
-	"github.com/mirastacklabs-ai/mirastack-sdk-go/datetimeutils"
+	mirastack "github.com/mirastacklabs-ai/mirastack-agents-sdk-go"
+	"github.com/mirastacklabs-ai/mirastack-agents-sdk-go/datetimeutils"
 )
 
 // Action handlers for the query_vtraces plugin.
