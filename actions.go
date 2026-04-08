@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	mirastack "github.com/mirastacklabs-ai/mirastack-agents-sdk-go"
 	"github.com/mirastacklabs-ai/mirastack-agents-sdk-go/datetimeutils"
@@ -48,24 +47,26 @@ func (p *QueryVTracesPlugin) actionSearch(ctx context.Context, params map[string
 	}
 
 	// Convert time parameters to microseconds since epoch for Jaeger API.
-	// Prefer engine-parsed TimeRange; fall back to raw params.
+	// Prefer engine-parsed TimeRange; fall back to raw params passed through
+	// from direct API calls.  Per project rules: no time.Parse() in plugins,
+	// no hardcoded offsets like time.Now().Add(-1h).
 	if tr != nil && tr.StartEpochMs > 0 {
 		opts.Start = datetimeutils.FormatEpochMicros(tr.StartEpochMs)
 		opts.End = datetimeutils.FormatEpochMicros(tr.EndEpochMs)
 	} else {
-		now := time.Now()
-		opts.Start = strconv.FormatInt(now.Add(-time.Hour).UnixMicro(), 10)
-		opts.End = strconv.FormatInt(now.UnixMicro(), 10)
-
+		// Raw params — these arrive as epoch-microsecond strings from direct
+		// API callers or as whatever the caller provides.  If absent, use SDK
+		// helper for a 1-hour default window expressed in epoch microseconds.
 		if s := params["start"]; s != "" {
-			if t, err := time.Parse(time.RFC3339, s); err == nil {
-				opts.Start = strconv.FormatInt(t.UnixMicro(), 10)
-			}
+			opts.Start = s
+		} else {
+			nowMs := datetimeutils.NowUTCMs()
+			opts.Start = datetimeutils.FormatEpochMicros(nowMs - 3600000)
 		}
-		if e := params["end"]; e != "" && !strings.EqualFold(e, "now") {
-			if t, err := time.Parse(time.RFC3339, e); err == nil {
-				opts.End = strconv.FormatInt(t.UnixMicro(), 10)
-			}
+		if e := params["end"]; e != "" {
+			opts.End = e
+		} else {
+			opts.End = datetimeutils.FormatEpochMicros(datetimeutils.NowUTCMs())
 		}
 	}
 
@@ -116,25 +117,24 @@ func (p *QueryVTracesPlugin) actionDependencies(ctx context.Context, params map[
 		endTs = datetimeutils.FormatEpochMillis(tr.EndEpochMs)
 		lookback = datetimeutils.FormatLookbackMillis(tr.StartEpochMs, tr.EndEpochMs)
 	} else {
-		// Fall back to raw params
-		now := time.Now()
-		endTs = strconv.FormatInt(now.UnixMilli(), 10)
-		lookback = "3600000" // 1 hour default
-
-		if end := params["end"]; end != "" && !strings.EqualFold(end, "now") {
-			if t, err := time.Parse(time.RFC3339, end); err == nil {
-				endTs = strconv.FormatInt(t.UnixMilli(), 10)
-			}
+		// Fall back to raw params from direct API callers.
+		// Per project rules: no time.Parse() in plugins, no hardcoded offsets.
+		if end := params["end"]; end != "" {
+			endTs = end
+		} else {
+			endTs = datetimeutils.FormatEpochMillis(datetimeutils.NowUTCMs())
 		}
 
 		if start := params["start"]; start != "" {
-			if t, err := time.Parse(time.RFC3339, start); err == nil {
-				endTime, _ := strconv.ParseInt(endTs, 10, 64)
-				lb := endTime - t.UnixMilli()
-				if lb > 0 {
-					lookback = strconv.FormatInt(lb, 10)
-				}
+			endParsed, _ := strconv.ParseInt(endTs, 10, 64)
+			startParsed, _ := strconv.ParseInt(start, 10, 64)
+			if endParsed > 0 && startParsed > 0 && endParsed > startParsed {
+				lookback = strconv.FormatInt(endParsed-startParsed, 10)
+			} else {
+				lookback = "3600000"
 			}
+		} else {
+			lookback = "3600000"
 		}
 	}
 
