@@ -22,7 +22,7 @@ The engine pushes configuration via `ConfigUpdated()`:
 
 | Key | Description |
 |-----|-------------|
-| `traces_url` | VictoriaTraces base URL (e.g., `http://victoriatraces:9411`) |
+| `traces_url` | VictoriaTraces base URL (e.g., `http://victoriatraces:10428`) |
 
 ## Example Workflow Step
 

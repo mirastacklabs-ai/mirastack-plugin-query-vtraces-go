@@ -162,7 +162,7 @@ func (p *QueryVTracesPlugin) Info() *mirastack.PluginInfo {
 			},
 		},
 		ConfigParams: []mirastack.ConfigParam{
-			{Key: "traces_url", Type: "string", Required: true, Description: "VictoriaTraces base URL (e.g. http://victoriatraces:9411)"},
+			{Key: "traces_url", Type: "string", Required: true, Description: "VictoriaTraces base URL (e.g. http://victoriatraces:10428)"},
 		},
 	}
 }
