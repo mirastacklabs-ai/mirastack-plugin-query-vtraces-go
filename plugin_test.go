@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -66,8 +67,8 @@ func TestEnrichTracesOutput_BasicFields(t *testing.T) {
 	if out["action"] != "search" {
 		t.Errorf("expected action=search, got %v", out["action"])
 	}
-	if out["result_count"] != 0 {
-		t.Errorf("expected result_count=0, got %v", out["result_count"])
+	if out["result_count"] != "0" {
+		t.Errorf("expected result_count=\"0\", got %v", out["result_count"])
 	}
 }
 
@@ -75,16 +76,22 @@ func TestEnrichTracesOutput_ExtractsServices(t *testing.T) {
 	raw := `{"data":[{"traceID":"abc","processes":{"p1":{"serviceName":"frontend"},"p2":{"serviceName":"backend"}}}]}`
 	out := enrichTracesOutput("search", raw)
 
-	if out["result_count"] != 1 {
-		t.Errorf("expected result_count=1, got %v", out["result_count"])
+	if out["result_count"] != "1" {
+		t.Errorf("expected result_count=\"1\", got %v", out["result_count"])
 	}
-	services, ok := out["services_found"].([]string)
+	servicesStr, ok := out["services_found"]
 	if !ok {
-		t.Fatal("expected services_found to be []string")
+		t.Fatal("expected services_found in output")
+	}
+	// services_found is a JSON array string, e.g. ["backend","frontend"]
+	var services []string
+	if err := json.Unmarshal([]byte(servicesStr), &services); err != nil {
+		t.Fatalf("services_found not valid JSON array string: %v", err)
 	}
 	if len(services) != 2 {
 		t.Errorf("expected 2 services, got %d", len(services))
 	}
+	_ = strings.Join(services, ",") // ensure the values are usable as strings
 }
 
 func TestEnrichTracesOutput_Truncation(t *testing.T) {
@@ -94,8 +101,8 @@ func TestEnrichTracesOutput_Truncation(t *testing.T) {
 	}
 	out := enrichTracesOutput("search", string(long))
 
-	if out["truncated"] != true {
-		t.Error("expected truncated=true for oversized result")
+	if out["truncated"] != "true" {
+		t.Error("expected truncated=\"true\" for oversized result")
 	}
 }
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strconv"
 
 	"github.com/mirastacklabs-ai/mirastack-agents-sdk-go"
 	"go.uber.org/zap"
@@ -179,6 +181,13 @@ func (p *QueryVTracesPlugin) Execute(ctx context.Context, req *mirastack.Execute
 		p.logger, _ = zap.NewProduction()
 	}
 
+	// Pull config from engine if client is not yet initialized (cached 15s in SDK).
+	if p.client == nil && p.engine != nil {
+		if config, err := p.engine.GetConfig(ctx); err == nil {
+			p.applyConfig(config)
+		}
+	}
+
 	action := req.ActionID
 	if action == "" {
 		action = req.Params["action"]
@@ -196,7 +205,7 @@ func (p *QueryVTracesPlugin) Execute(ctx context.Context, req *mirastack.Execute
 		return resp, nil
 	}
 
-	resp, _ := mirastack.RespondMap(enrichTracesOutput(action, result))
+	resp, _ := mirastack.RespondJSON(enrichTracesOutput(action, result))
 	resp.Logs = []string{fmt.Sprintf("action %s completed", action)}
 	return resp, nil
 }
@@ -252,8 +261,13 @@ func (p *QueryVTracesPlugin) applyConfig(config map[string]string) {
 }
 
 // enrichTracesOutput wraps raw trace query results with metadata for LLM consumption.
-func enrichTracesOutput(action, raw string) map[string]any {
-	out := map[string]any{
+// enrichTracesOutput wraps raw trace results with metadata for LLM consumption.
+// Return type is map[string]string to honour the plugin CallPlugin contract:
+// the SDK unmarshals plugin responses into map[string]string and will fail
+// on any non-string JSON value. All counts, booleans, and slices are
+// stringified here — services_found becomes a JSON array string.
+func enrichTracesOutput(action, raw string) map[string]string {
+	out := map[string]string{
 		"action": action,
 		"result": raw,
 	}
@@ -261,7 +275,7 @@ func enrichTracesOutput(action, raw string) map[string]any {
 	const maxLen = 32000
 	if len(raw) > maxLen {
 		out["result"] = raw[:maxLen]
-		out["truncated"] = true
+		out["truncated"] = "true"
 	}
 
 	var parsed map[string]any
@@ -270,7 +284,7 @@ func enrichTracesOutput(action, raw string) map[string]any {
 		if data, ok := parsed["data"]; ok {
 			switch d := data.(type) {
 			case []any:
-				out["result_count"] = len(d)
+				out["result_count"] = strconv.Itoa(len(d))
 				// For search results, extract unique services.
 				if action == "search" {
 					services := map[string]bool{}
@@ -292,7 +306,11 @@ func enrichTracesOutput(action, raw string) map[string]any {
 						for s := range services {
 							names = append(names, s)
 						}
-						out["services_found"] = names
+						sort.Strings(names)
+						// Serialize as a JSON array string so the value stays a string.
+						if b, err := json.Marshal(names); err == nil {
+							out["services_found"] = string(b)
+						}
 					}
 				}
 			}
