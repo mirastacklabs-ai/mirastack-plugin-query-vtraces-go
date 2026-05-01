@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 
@@ -252,7 +253,11 @@ func (p *QueryVTracesPlugin) ConfigUpdated(_ context.Context, config map[string]
 }
 
 func (p *QueryVTracesPlugin) applyConfig(config map[string]string) {
-	if url, ok := config["traces_url"]; ok && url != "" {
+	url := config["traces_url"]
+	if url == "" {
+		url = os.Getenv("MIRASTACK_TRACES_URL")
+	}
+	if url != "" {
 		p.client = NewVTracesClient(url)
 		if p.logger != nil {
 			p.logger.Info("VictoriaTraces client updated", zap.String("url", url))
